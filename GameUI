@@ -1,0 +1,242 @@
+using UnityEngine;
+using TMPro;
+using UnityEngine.UI;
+
+/// Класс игрового интерфейса (HUD) - отображает всю информацию во время геймплея
+/// Наследуется от MonoBehaviour для возможности прикрепления к GameObject
+public class GameUI : MonoBehaviour  // Объявляю публичный класс, наследуемый от MonoBehaviour
+{
+    // СЕРИАЛИЗУЕМЫЕ ПОЛЯ 
+
+    // Группируем основные элементы худ в отдельную секцию для удобства
+    [Header("Main HUD")]  // Заголовок секции в окне Inspector
+    [SerializeField] private GameObject mainHUD;            // Ссылка на корневой объект HUD (вкл/выкл весь интерфейс)
+    [SerializeField] private TextMeshProUGUI plantNameText; // Текстовое поле для отображения названия растения
+    [SerializeField] private TextMeshProUGUI healthText;    // Текст с числовым значением здоровья растения
+    [SerializeField] private Image healthBar;               // Визуальная полоска здоровья (заполняется пропорционально)
+
+    // Секция для отображения параметров окружающей среды
+    [Header("Environment Info")]  // Заголовок "Информация о среде" в Inspector
+    [SerializeField] private TextMeshProUGUI lightText;     // Текст с текущим уровнем освещённости
+    [SerializeField] private TextMeshProUGUI windText;      // Текст со скоростью ветра
+    [SerializeField] private TextMeshProUGUI tempText;      // Текст с температурой воздуха
+
+    // Секция визуальных индикаторов (цветовые сигналы)
+    [Header("Status Indicators")]  // Заголовок "Индикаторы статуса"
+    [SerializeField] private GameObject lightIndicator;     // Объект-индикатор освещения (меняет цвет)
+    [SerializeField] private GameObject windIndicator;      // Объект-индикатор ветра (меняет цвет)
+    [SerializeField] private GameObject warningPanel;       // Панель для отображения предупреждений игроку
+
+    // Секция кнопок управления интерфейсом
+    [Header("Controls")]  // Заголовок "Элементы управления"
+    [SerializeField] private GameObject controlsPanel;      // Панель с подсказками по управлению
+    [SerializeField] private Button diagnosticButton;       // Кнопка открытия панели диагностики растения
+    [SerializeField] private Button settingsButton;         // Кнопка открытия настроек игры
+    [SerializeField] private Button menuButton;             // Кнопка возврата в главное меню
+
+    // Секция системы уведомлений
+    [Header("Notifications")]  // Заголовок "Система уведомлений"
+    [SerializeField] private Transform notificationParent;  // Родительский объект для пула уведомлений (организация иерархии)
+    [SerializeField] private GameObject notificationPrefab; // Префаб уведомления (шаблон для Instantiation)
+
+    // ВНУТРЕННИЕ ПОЛЯ КЛАССА  ):
+    // Приватная ссылка на данные текущего растения - не сериализуется, задаётся кодом
+    private PlantData currentPlant;  // Хранит параметры растения для отображения и расчётов
+
+    // МЕТОДЫ ЖИЗНЕННОГО ЦИКЛА UNITY
+    // старт вызывается один раз при активации объекта - используем для первичной настройки
+    private void Start()  // Объявляем приватный метод инициализации
+    {
+        // Настраиваем обработчики нажатий для всех кнопок интерфейса
+        SetupButtons();  // Подписываем методы на события onClick
+        // Показываем игроку подсказки по управлению при старте уровня
+        ShowControlsHint();  // Создаём уведомление со списком горячих клавиш
+    }
+    // Update() вызывается каждый кадр - используем для динамического обновления данных
+    private void Update()  // Объявляем приватный метод обновления
+    {
+        // Обновляем информацию о параметрах среды (свет, ветер, температура)
+        UpdateEnvironmentInfo();  // Читаем данные из систем и обновляем UI
+        // Проверяем нажатия горячих клавиш для быстрого доступа к функциям
+        HandleHotkeys();  // Обрабатываем ввод с клавиатуры
+    }
+
+    // МЕТОД НАСТРОЙКИ КНОПОК
+    private void SetupButtons()  // Приватный метод инициализации кнопок
+    {
+        // Проверяем кнопку диагностики на null перед подпиской - защита от ошибок
+        if (diagnosticButton != null)  // Если кнопка назначена в Inspector
+            diagnosticButton.onClick.AddListener(OpenDiagnostic);  // Подписываем метод открытия диагностики
+        // Аналогично для кнопки настроек
+        if (settingsButton != null)  // Проверка наличия ссылки
+            settingsButton.onClick.AddListener(OpenSettings);  // Подписываем метод открытия настроек
+        // Кнопка возврата в главное меню
+        if (menuButton != null)  // Защита от NullReferenceException
+            menuButton.onClick.AddListener(OpenMainMenu);  // Подписываем метод загрузки сцены меню
+    }
+
+    // ОБНОВЛЕНИЕ ДАННЫХ ОКРУЖАЮЩЕЙ СРЕДЫ
+
+    /// Обновляет информацию об окружающей среде каждый кадр
+    private void UpdateEnvironmentInfo()  // Приватный метод обновления эко-параметров
+    {
+        // ОБНОВЛЕНИЕ ОСВЕЩЕНИЯЯЯЯЯ
+        // Проверяем наличие экземпляра системы света и текущего растения
+        if (LightSystem.Instance != null && currentPlant != null)  // Защита от null-ссылок
+        {
+            // Запрашиваем уровень инсоляции для позиции растения через синглтон LightSystem
+            float light = LightSystem.Instance.GetInsolationForPlant(transform);  // Получаем значение 0.0-1.0
+            lightText.text = $"Свет: {light:P0}";  // Форматируем как проценты без знаков после запятой
+            // Обновляем цветовой индикатор: синий=мало, зелёный=норма, красный=много
+            UpdateIndicator(lightIndicator, light, currentPlant.MinLight, currentPlant.MaxLight);  // Передаём диапазон нормы
+        }
+
+        //ОБНОВЛЕНИЕ ВЕТРА
+        // Проверяем наличие менеджера ветра (синглтон-паттерн)
+        if (WindManager.Instance != null)  // Если система ветра инициализирована
+        {
+            // Получаем текущую скорость ветра и форматируем с 1 знаком после запятой
+            windText.text = $"Ветер: {WindManager.Instance.CurrentWindSpeed:F1} м/с";  // Строка с единицами измерения
+        }
+        // ОБНОВЛЕНИЕ ТЕМПЕРАТУРЫ
+        // Временная заглушка - в финальной версии брать данные из WeatherSystem
+        float currentTemp = 20f;  // Хардкод-значение для тестирования интерфейса
+        tempText.text = $"Температура: {currentTemp}°C";  // Вывод температуры с символом градуса
+    }
+
+    /// Обновляет цвет индикатора на основе текущего значения и допустимого диапазона
+    /// <param name="indicator">GameObject индикатора</param>
+    /// <param name="value">Текущее значение параметра</param>
+    /// <param name="min">Минимальное допустимое значение</param>
+    /// <param name="max">Максимальное допустимое значение</param>
+    private void UpdateIndicator(GameObject indicator, float value, float min, float max)  // Метод визуальной обратной связи
+    {
+        // Защита от null - если индикатор не назначен, выходим из метода
+        if (indicator == null) return;  // Предотвращаем ошибки при отсутствии объекта
+        // Получаем компонент Image для изменения цвета
+        Image indicatorImage = indicator.GetComponent<Image>();  // Запрашиваем компонент на объекте
+        if (indicatorImage == null) return;  // Если компонента нет - выходим
+        // Сравниваем текущее значение с допустимым диапазоном
+        if (value < min)  // Если значение ниже минимума
+            indicatorImage.color = Color.blue;      // Красим в синий - "недостаточно"
+        else if (value > max)  // Если значение выше максимума
+            indicatorImage.color = Color.red;       // Красим в красный - "критично"
+        else  // Если значение в пределах нормы
+            indicatorImage.color = Color.green;     // Красим в зелёный - "всё ок"
+    }
+
+    // ОБРАБОТКА ПОЛЬЗОВАТЕЛЬСКОГО ВВОДА
+    /// Обрабатывает нажатия горячих клавиш каждый кадр
+    private void HandleHotkeys()  // Приватный метод обработки клавиатуры
+    {
+        // Клавиша D - быстрое открытие диагностики растения
+        if (Input.GetKeyDown(KeyCode.D))  // Срабатывает один раз при нажатии
+        {
+            OpenDiagnostic();  // Вызываем метод открытия диагностической панели
+        }
+        // Клавиша Escape - пауза игры или открытие меню
+        if (Input.GetKeyDown(KeyCode.Escape))  // Стандартная клавиша паузы
+        {
+            TogglePause();  // Переключаем состояние паузы
+        }
+        // Клавиша H - показать подсказки по управлению
+        if (Input.GetKeyDown(KeyCode.H))  // Help-клавиша для новичков
+        {
+            ShowControlsHint();  // Показываем уведомление со списком кнопок
+        }
+    }
+
+    /// Открывает панель диагностики текущего растения
+    public void OpenDiagnostic()  // Публичный метод для вызова из UI или кода
+    {
+        // Ищем компонент панели диагностики в сцене через FindObjectOfType
+        DiagnosticPanel diagnosticPanel = FindObjectOfType<DiagnosticPanel>();  // Поиск по всей сцене (может быть медленно)
+        // Проверяем наличие панели и данных о растении
+        if (diagnosticPanel != null && currentPlant != null)  // Защита от null
+        {
+            // Передаём данные растения в панель для отображения
+            diagnosticPanel.ShowPlantInfo(currentPlant);  // Вызов метода с параметром
+        }
+    }
+
+    /// Открывает панель настроек игры
+    public void OpenSettings()  // Публичный метод-заглушка
+    {
+        // TODO: Реализовать открытие панели настроек (создать префаб, добавить в UIManager)
+        Debug.Log("Открыть настройки");  // Временный лог для отладки нажатия кнопки
+    }
+
+    /// Возвращает игрока в главное меню
+    public void OpenMainMenu()  // Публичный метод для кнопки "Меню"
+    {
+        // Загружаем сцену главного меню по имени через SceneManager
+        UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");  // Полное пространство имён для ясности
+    }
+
+    /// Переключает состояние паузы в игре
+    private void TogglePause()  // Приватный метод переключения времени
+    {
+        // Если время остановлено (0) - запускаем (1), иначе - останавливаем
+        Time.timeScale = Time.timeScale == 0 ? 1 : 0;  // Тернарный оператор для компактности
+    }
+
+    // СИСТЕМА УВЕДОМЛЕНИЙ
+
+    /// Создаёт и показывает всплывающее уведомление
+    /// <param name="message">Текст сообщения</param>
+    /// <param name="type">Тип уведомления (цвет/иконка)</param>
+    public void ShowNotification(string message, NotificationType type = NotificationType.Info)  // Метод с дефолтным параметром
+    {
+        // Проверяем наличие префаба и родителя для спавна
+        if (notificationPrefab == null || notificationParent == null)  // Валидация зависимостей
+        {
+            // Если система не настроена - выводим в консоль как фолбэк
+            Debug.Log(message);  // Логирование для отладки
+            return;  // Выход из метода без создания объекта
+        }
+        // Создаём экземпляр уведомления в иерархии под родителем
+        GameObject notification = Instantiate(notificationPrefab, notificationParent);  // Instantiation префаба
+        // Получаем скрипт управления уведомлением для инициализации
+        NotificationUI notificationScript = notification.GetComponent<NotificationUI>();  // Запрос компонента
+        // Инициализируем уведомление, если компонент найден
+        if (notificationScript != null)  // Проверка на успешное получение компонента
+        {
+            notificationScript.Initialize(message, type);  // Передаём текст и тип для настройки внешнего вида
+        }
+        // Уничтожаем объект уведомления через 3 секунды для очистки памяти
+        Destroy(notification, 3f);  // Отложенное удаление через Unity-метод
+    }
+
+    /// Показывает подсказку со списком горячих клавиш
+    private void ShowControlsHint()  // Приватный вспомогательный метод
+    {
+        // Формируем многострочную строку с описанием управления
+        string hint = "Управление:\n" +  // Заголовок с переносом строки
+                     "D - Диагностика\n" +  // Клавиша диагностики
+                     "Esc - Пауза\n" +  // Клавиша паузы
+                     "H - Помощь\n" +  // Клавиша помощи
+                     "Колёсико мыши - Зум";  // Управление камерой
+        // Показываем сформированную подсказку как информационное уведомление
+        ShowNotification(hint, NotificationType.Info);  // Вызов общего метода с типом Info
+    }
+
+    /// Устанавливает ссылку на текущее растение и обновляет отображение
+    /// <param name="plant">Данные растения для отображения</param>
+    public void SetCurrentPlant(PlantData plant)  // Публичный сеттер для внешнего вызова
+    {
+        // Сохраняем ссылку на растение в приватное поле
+        currentPlant = plant;  // Обновление внутренней переменной
+        // Обновляем текстовое поле с названием растения в интерфейсе
+        plantNameText.text = plant.PlantName;  // Присваивание текста из объекта данных
+    }
+}
+
+// ПЕРЕЧИСЛЕНИЕ ТИПОВ УВЕДОМЛЕНИЙ
+/// Перечисление типов уведомлений для визуальной дифференциации
+public enum NotificationType  // Объявляем публичный enum для типизации уведомлений
+{
+    Info,       // Информационное уведомление (синий цвет)
+    Success,    // Успешное действие (зелёный цвет)
+    Warning,    // Предупреждение (жёлтый цвет)
+    Error       // Критическая ошибка (красный цвет)
+}
